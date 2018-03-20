@@ -34,7 +34,7 @@ $DebugPreference = "continue"
 # Проверять последние 2 минуты журнала
 $CHECK_WINDOW = 120	# We check the most recent X seconds of log.				 Default: 120
 # Блокировать за столько неудачных попыток за указанное выше время
-$CHECK_COUNT	= 2		# Ban after this many failures in search period.		 Default: 5
+$CHECK_COUNT	= 5		# Ban after this many failures in search period.		 Default: 5
 # Максимальное время блокировки
 $MAX_BANDURATION = 7776000 # 3 Months in seconds
 
