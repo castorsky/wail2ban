@@ -36,7 +36,7 @@ $CHECK_WINDOW = 120	# We check the most recent X seconds of log.				 Default: 12
 # Блокировать за столько неудачных попыток за указанное выше время
 $CHECK_COUNT	= 2		# Ban after this many failures in search period.		 Default: 5
 # Максимальное время блокировки
-$MAX_BANDURATION = 600	#7776000 # 3 Months in seconds
+$MAX_BANDURATION = 7776000 # 3 Months in seconds
 
 ################################################################################
 #	Files
@@ -676,46 +676,46 @@ Read-BlockPeriodLog
 # Запуск цикла, который ожидает действий злоумышленников
 try {
 	Register-WMIEvent -Query $query -sourceidentifier $sinkName
-	do { #bedobedo
+	do {
 		# Спать в ожидании события, подходящего под запрос
-		$occurredEvent = Wait-Event -sourceidentifier $sinkName
+		$occurredEvent = Wait-Event -sourceidentifier $sinkName -Timeout 120
 		# При появлении события вытаскиваем из него нужную информацию
-		$eventInstance = $occurredEvent.SourceEventArgs.NewEvent.TargetInstance
-		# Для каждого IP адреса в сообщении производим проверки
-		Select-String $RegexIP -input $eventInstance.message -AllMatches | ForEach-Object { foreach ($address in $_.matches) {
-			$IP = $address.Value
-			# Если попался IP самого компа - пропустить
-			if ($SelfList -match $IP) {
-				Write-LogDebug "Whitelist of self-listed IPs! Do nothing. ($IP)"
-			} else {
-			# Собрать инфу о событии и добавить ее в хэшмассив
-			$RecordID = $eventInstance.RecordNumber
-			$EventDate = WMIDateStringToDateTime($eventInstance.TIMEGenerated)
-			$eventsTable.Add($RecordID, @($IP,$EventDate))
+		if ($occurredEvent) {
+			$eventInstance = $occurredEvent.SourceEventArgs.NewEvent.TargetInstance
+			# Для каждого IP адреса в сообщении производим проверки
+			Select-String $RegexIP -input $eventInstance.message -AllMatches | ForEach-Object { foreach ($address in $_.matches) {
+				$IP = $address.Value
+				# Если попался IP самого компа - пропустить
+				if ($SelfList -match $IP) {
+					Write-LogDebug "Whitelist of self-listed IPs! Do nothing. ($IP)"
+				} else {
+					# Собрать инфу о событии и добавить ее в хэшмассив
+					$RecordID = $eventInstance.RecordNumber
+					$EventDate = WMIDateStringToDateTime($eventInstance.TIMEGenerated)
+					$eventsTable.Add($RecordID, @($IP,$EventDate))
 
-			# В хэшмассиве eventsTable хранится инфа о попытках доступа с момента старта скрипта
-			# Здесь считаются попытки доступа с одного IP
-			$IPCount = 0
-			foreach ($value in $eventsTable.Values) {
-				if ($IP -eq $value[0]) { $IPCount++ }
-			}
-			Write-LogDebug "$($eventInstance.LogFile) Write-Log Event captured: ID $($RecordID), IP $IP, Event Code $($eventInstance.EventCode), Attempt #$($IPCount). "
+					# В хэшмассиве eventsTable хранится инфа о попытках доступа с момента старта скрипта
+					# Здесь считаются попытки доступа с одного IP
+					$IPCount = 0
+					foreach ($value in $eventsTable.Values) {
+						if ($IP -eq $value[0]) { $IPCount++ }
+					}
+					Write-LogDebug "$($eventInstance.LogFile) Write-Log Event captured: ID $($RecordID), IP $IP, Event Code $($eventInstance.EventCode), Attempt #$($IPCount). "
 
-			# При достижении порога попыток адрес отправляется в блок
-			if ($IPCount -ge $CHECK_COUNT) {
-				# Отправить адрес в бан
-				Block-Address $IP
-				# Сбросить
-				Reset-AttemptCount $IP
+					# При достижении порога попыток адрес отправляется в блок
+					if ($IPCount -ge $CHECK_COUNT) {
+						# Отправить адрес в бан
+						Block-Address $IP
+						# Сбросить
+						Reset-AttemptCount $IP
+					}
+					Reset-AttemptCount				
+				}
 			}
-			Reset-AttemptCount
-			Unblock-ExpiredRecords
 			}
+			Remove-Event -sourceidentifier $sinkName
 		}
-		}
-
-		Remove-Event -sourceidentifier $sinkName
-
+		Unblock-ExpiredRecords
 	} while ($true)
 }
 catch {
