@@ -31,20 +31,14 @@ $DebugPreference = "continue"
 ################################################################################
 #	Constants
 
-# Проверять последние 2 минуты журнала
 $CHECK_WINDOW = 120	# We check the most recent X seconds of log.				 Default: 120
-# Блокировать за столько неудачных попыток за указанное выше время
 $CHECK_COUNT	= 5		# Ban after this many failures in search period.		 Default: 5
-# Максимальное время блокировки
 $MAX_BANDURATION = 7776000 # 3 Months in seconds
 
 ################################################################################
 #	Files
 
-# get-location вызовет ошибку, если не перейти в папку со скриптом
 $wail2banInstall = ""+(split-path -parent $MyInvocation.MyCommand.Definition)+"\"
-# $wail2banInstall = ""+(Get-Location)+"\"
-# $wail2banScript	= $wail2banInstall+"wail2ban.ps1"
 $logFile			= $wail2banInstall+"wail2ban_log.log"
 $ConfigFile			= $wail2banInstall+"wail2ban_config.ini"
 $BannedIPLog		= $wail2banInstall+"bannedIPLog.ini"
@@ -60,59 +54,48 @@ $mikroConnection	= $null
 
 $RecordEventLog		 = "Application"		 # Where we store our own event messages
 $FirewallRulePrefix = "wail2ban block:" # What we name our Rules
-
-# Типы событий, которые будут обрабатываться
 $EventTypes = "Application,Security,System"		#Event logs we allow to be processed
 
-# Реджекс для IP-адресов
 New-Variable -Name RegexIP -Force -Value ([regex]'(?<First>2[0-4]\d|25[0-5]|[01]?\d\d?)\.(?<Second>2[0-4]\d|25[0-5]|[01]?\d\d?)\.(?<Third>2[0-4]\d|25[0-5]|[01]?\d\d?)\.(?<Fourth>2[0-4]\d|25[0-5]|[01]?\d\d?)')
 
-# Ban Count structure
-# Список заблокированных IP = { адрес, период_блокировки }
+# Block list structure: { IP = (address, blockPeriod) }
 $BannedIPs = @{}
-# Incoming event structure
-# Структура таблицы входящих событий
+# Incoming event table structure
 $CheckEvents = New-object system.data.datatable("CheckEvents")
 $null = $CheckEvents.columns.add("EventLog")
 $null = $CheckEvents.columns.add("EventID")
 $null = $CheckEvents.columns.add("EventDescription")
 
-# Пустой список доверенных адресов
 $WhiteList = @()
 #$host.UI.RawUI.BufferSize = new-object System.Management.Automation.Host.Size(100,50)
 
-#You can overload the BlockType here for 2003, if you feel like having fun.
+# You can overload the BlockType here for 2003, if you feel like having fun.
 $OSVersion = Invoke-Expression "wmic os get Caption /value"
 if ($OSVersion -match "2008") { $BLOCK_TYPE = "NETSH" }
 if ($OSVersion -match "2012") { $BLOCK_TYPE = "NETSH" }
 if ($OSVersion -match "2016") { $BLOCK_TYPE = "NETSH" }
 
-#Grep configuration file
-# Прочитать конфигурацию
+# Grep configuration file
 switch -regex -file $ConfigFile {
-	# Найти заголовок раздела настроек
+	# [Header]
 	"^\[(.+)\]$" {
 		$Header = $matches[1].Trim()
 	}
-	# Номер и описание события, разделенные знаком равенства
-	# Не выебываемся со знаком коммента в INI-файле, он должен быть ";"
+	# 12345=Event
+	# INI-format have semicolon sign as comment start
 	"^\s*([^;].+?)\s*=\s*(.*)" {
 		$Match1 = $matches[1]
 		$Match2 = $matches[2]
 
-		# Если в списке обрабатываемых событий есть тип $Header из конфигурации,
-		# то добавить в таблицу входящих событий этот тип события
 		if ( $EventTypes -match $Header ) {
 			$row = $CheckEvents.NewRow()
 			$row.EventLog = $Header
 			$row.EventID = $Match1
 			$row.EventDescription = $Match2
 			$CheckEvents.Rows.Add($row)
-		} else { # Иначе проверяем, нет ли в конфигурации белого списка
+		} else {
 			switch ($Header) {
-				# И добавляем в него адреса из конфигурации
 				"Whitelist" { $WhiteList += $Match1; }
-				# Разбираем раздел Микротика
 				"Mikrotik" {
 					$BLOCK_TYPE = "MIKROTIK"
 					switch ($Match1) {
@@ -130,9 +113,8 @@ switch -regex -file $ConfigFile {
 }
 
 # We also want to whitelist this machine's NICs.
-# Адрес данного компа надо исключить из блокирвок
-# В русской винде нет слова "Address", а "Адрес" может быть написан кракозябрами.
-# Поэтому ищем "IPv4"
+# Address field in non-english Windows may have other name
+# so search for IPv4 text
 $SelfList = @()
 foreach ($listing in ((ipconfig | findstr [0-9].\.))) {
 	#if ($listing -match "Address" ){ 	$SelfList += $listing.Split()[-1] }
@@ -142,7 +124,7 @@ foreach ($listing in ((ipconfig | findstr [0-9].\.))) {
 ################################################################################
 # Functions
 
-# Запись действий скрипта в системный журнал событий
+# Register script action in system log
 function Register-Event ($text,$task,$result) {
 	$event = New-Object System.Diagnostics.EventLog($RecordEventLog)
 	$event.Source="wail2ban"
@@ -158,14 +140,12 @@ function Register-Event ($text,$task,$result) {
 }
 
 # Write-Log type functions
-# Функции типов журналирования
 function Write-LogError		($text) { Write-Log "E" $text }
 function Write-LogWarning	($text) { Write-Log "W" $text }
 function Write-LogDebug		($text) { Write-Log "D" $text }
 function Write-LogAction	($text) { Write-Log "A" $text }
 
 # Write-Log things to file and debug
-# Вывод событий в файл журнала или в дебаг
 function Write-Log ($type, $text) {
 	$output = ""+(Get-Date -format u).replace("Z","")+" $tag $text"
 	if ($type -eq "A") { $output | Out-File $logfile -append}
@@ -177,9 +157,8 @@ function Write-Log ($type, $text) {
 	}
 }
 
-# Get the current list of wail2ban bans
-# Прочитать из правил фаервола список блокировок
-# В результате получим хэшмассив blockList
+# Get the current list of wail2ban bans from firewall rules
+# Return hashtable "blockList"
 function Read-BlockList {
 	$blockList = @{}
 	switch ($BLOCK_TYPE) {
@@ -217,8 +196,7 @@ function Read-BlockList {
 	}
 }
 
-# Confirm if rule exists.
-# Существует ли правило для заданного IP
+# Confirm if rule exists for specified IP
 function Test-RuleExists ($IP) {
 	switch($BLOCK_TYPE) {
 		"NETSH" {
@@ -252,7 +230,7 @@ function Test-RuleExists ($IP) {
 	}
 }
 
-#Convert subnet Slash (e.g. 26, for /26) to netmask (e.g. 255.255.255.192)
+# Convert subnet Slash (e.g. 26, for /26) to netmask (e.g. 255.255.255.192)
 function Convert-Netmask ($netmaskValue) {
 	$IPAddress =	[UInt32]([Convert]::ToUInt32($(("1" * $netmaskValue).PadRight(32, "0")), 2))
 	$DottedIP = $( For ($i = 3; $i -gt -1; $i--) {
@@ -264,16 +242,15 @@ function Convert-Netmask ($netmaskValue) {
 	Return [String]::Join('.', $DottedIP)
 }
 
-#check if IP is whitelisted
-# Проверка адреса по белому списку
+# Check if IP is whitelisted
 function Search-Whitelist ($IP) {
 	foreach ($whitelistEntry in $Whitelist) {
-		# Проверка отдельного адреса
+		# Check single address
 		if ($IP -eq $whitelistEntry) {
 			$Whitelisted = "Uniquely listed."
 			break
 		}
-		# Проверка подсети, заданной маской
+		# Check subnet specified by mask
 		if ($whitelistEntry.contains("/")) {
 			$netmask = Convert-Netmask($whitelistEntry.Split("/")[1])
 			$subnet = $whitelistEntry.Split("/")[0]
@@ -287,7 +264,7 @@ function Search-Whitelist ($IP) {
 	return $Whitelisted
 }
 
-#Read in the saved file of settings. Only called on script start, such as after reboot
+# Read in the saved file of settings. Only called on script start, such as after reboot
 function Read-BlockPeriodLog {
 	if (Test-Path $BannedIPLog) {
 		Get-Content $BannedIPLog | ForEach-Object{
@@ -300,12 +277,11 @@ function Read-BlockPeriodLog {
 	}
 }
 
-#Get the ban time for an IP, in seconds
-# Получить период блокировки в секундах
+# Get the block time for an IP from list of blocked IPs, in seconds
 function Get-BlockPeriod ($IP) {
 	if ($BannedIPs.ContainsKey($IP)) {
-		# blockGrade - это формальный уровень блокировки, который затем
-		# будет преобразован в секунды
+		# blockGrade is formal level of blocking
+		# after will be converted to seconds
 		[int]$blockGrade = $BannedIPs.Get_Item($IP)
 	} else {
 		$blockGrade = 0
@@ -313,7 +289,8 @@ function Get-BlockPeriod ($IP) {
 	}
 	$blockGrade++
 	$BannedIPs.Set_Item($IP, $blockGrade)
-	# Установить период блокировки как степень числа 5
+
+	# Set block period as power of 5
 	$blockPeriod =	[math]::min([math]::pow(5,$blockGrade)*60, $MAX_BANDURATION)
 	Write-LogDebug "IP $IP has the new setting of $blockGrade, being $blockPeriod seconds"
 	if (Test-Path $BannedIPLog) {
@@ -325,18 +302,16 @@ function Get-BlockPeriod ($IP) {
 	return $blockPeriod
 	}
 
-# Ban the IP (with checking)
-# Поместить адрес в черный список
+# Block the IP (with checking)
 function Block-Address ($IP, $expireDate) {
-	# Адрес в белом списке?
+	# Is address whitelisted?
 	$result = Search-Whitelist ($IP)
 	if ($result) {
-		# Тогда выводим сообщение и ничего больше не делаем
+		# then write message and do nothing
 		Write-LogWarning "$IP is whitelisted, except from banning. Why? $result "
 	} else {
-		# Если не в белом списке
 		if (!$expireDate) {
-			# При наличии параметра даты проверим период блокировки
+			# If expireDate not specified get it from BannedIPLog
 			$blockPeriod = Get-BlockPeriod($IP)
 			$expireDate = (Get-Date).AddSeconds($blockPeriod)
 		}
@@ -349,9 +324,7 @@ function Block-Address ($IP, $expireDate) {
 }
 
 # Unban the IP (with checking)
-# Разблокировать адрес
 function Unlock-Address ($IP) {
-	# Выполнять действия только если адрес заблокирован
 	if (!(Test-RuleExists $IP)) {
 		Write-LogDebug "$IP firewall listing doesn't exist. Can't remove it. "
 	} else {
@@ -360,12 +333,11 @@ function Unlock-Address ($IP) {
 }
 
 # Add the Firewall Rule
-# Добавть правило в фаервол
 function Add-FirewallRule ($IP, $expireDate) {
 	$expire = (Get-Date $expireDate -format u).replace("Z","")
 	switch($BLOCK_TYPE) {
-		# Внешние программы и командлеты по разному принимают аргументы
-		# Поэтому сразу два вида массивов с параметрами
+		# External apps and cmdlets receive arguments in differents ways
+		# That's why using 2 different tables
 		"NETSH" {
 			$addRuleExec = 'netsh'
 			$addRuleExecArgs = @(
@@ -385,8 +357,9 @@ function Add-FirewallRule ($IP, $expireDate) {
 			$addRuleCmdletArgs = @{
 				Connection = $mikroConnection
 				Command = "/ip/firewall/address-list/add"
-				# Атрибут timeout пока не буду использовать
-				# Пускай правило удаляет тот, кто его создал
+				# Mikrotik address-list has the TIMEOUT argument
+				# But will not use it
+				# Let the rule be deleted by script which created it
 				Attributes = @("comment=Expire: $expire",
 							"list=$addrListName",
 							"address=$IP"
@@ -410,7 +383,6 @@ function Add-FirewallRule ($IP, $expireDate) {
 }
 
 # Remove the Filewall Rule
-# Удалить правило фаервола
 function Remove-FirewallRule ($IP) {
 	switch($BLOCK_TYPE) {
 		"NETSH" {
@@ -454,9 +426,8 @@ function Remove-FirewallRule ($IP) {
 }
 
 # Remove any expired bans
-# Разблокировать устаревшие записи
 function Unblock-ExpiredRecords {
-	# Читаем из правил фаервола список блокировок
+	# Read blockList from firewall rules
 	$currentBlockList = Read-BlockList
 	if ($currentBlockList) {
 		foreach ($record in $currentBlockList.GetEnumerator()) {
@@ -471,7 +442,7 @@ function Unblock-ExpiredRecords {
 	}
 }
 
-#Convert the TimeGenerated time into Epoch
+ #Convert the TimeGenerated time into Epoch
 function WMIDateStringToDateTime( [String] $iSt ) {
 	$iSt.Trim() > $null
 	$iYear	 = [Int32]::Parse($iSt.SubString( 0, 4))
@@ -491,21 +462,15 @@ function WMIDateStringToDateTime( [String] $iSt ) {
 
 
 # Remove recorded access attempts, by IP, or expired records if no IP provided.
-# Сбросить счетчик неудачных попыток для заданного IP
-# или по истечению срока давности
 function Reset-AttemptCount ($IP = 0) {
 	$removalList = @()
-	# eventRecord = { $RecordID, @($IP,$EventDate) }
+	# structure: eventRecord = { $RecordID, @($IP,$EventDate) }
 	ForEach ($eventRecord in $eventsTable.GetEnumerator()) {
 		if ($IP -eq 0) {
-		# Если функцию вызвали без параметра
-		# Проверяем, не пришло ли время удалять запись из таблицы
 		if ([int]$eventRecord.Value[1]+$CHECK_WINDOW -lt (Get-Date ((Get-Date).ToUniversalTime()) -UFormat "%s").replace(",",".")) {
 			$removalList += $eventRecord.Key
 		}
 		} else {
-		# Если вызвали с параметром
-		# Проверяем наличие такого IP в таблице
 		ForEach ($eventRecord in $eventsTable.GetEnumerator()) {
 			if ($eventRecord.Value[0] -eq $IP) {	$removalList += $eventRecord.Key }
 		}
@@ -514,10 +479,9 @@ function Reset-AttemptCount ($IP = 0) {
 	ForEach ($entry in $removalList) { $eventsTable.Remove($entry)}
 }
 
-# Открыть соединение с Микротиком. Проверить наличие правила блокировки.
-# Если не получилось открыть - выйти из скрипта полностью.
+# Open connection to Miktotik, check if blocking rule exists
+# If connection could not be established quit script entirely
 function Open-MikrotikConnection {
-# Попробовать загрузить модуль. Нет модуля - нет работы
 	Try {
 		Import-Module $mikroModulePath -ErrorAction Stop
 	} Catch {
@@ -525,7 +489,6 @@ function Open-MikrotikConnection {
 		Write-LogError $message
 	}
 
-	# Дальше устанавливаем соединение с Микротиком. Нет соединения - ну ты понел.
 	$execCmd = 'Connect-Mikrotik'
 	$execParams = @{
 		IPAddress	= $mikroIP
@@ -540,8 +503,7 @@ function Open-MikrotikConnection {
 		exit 1
 	}
 
-	# Проверка существования правила, в список адресов которого будут добавляться негодяи.
-	# Нет правила - создаем его.
+	# Check existance of autogenerated rule
 	$execCmd = 'Send-Mikrotik'
 	$execParams = @{
 		Connection = $mikroConnectionLocal
@@ -562,7 +524,8 @@ function Open-MikrotikConnection {
 						"place-before=0")
 		}
 		$createRule = & $execCmd @execParams
-		# Вывод есть только в случае ошибки.
+		
+		# Command ADD returns smth ony in case of error
 		if ($createRule) {
 			Write-LogError "Could not create rule, something wrong."
 			Disconnect-Mikrotik -Connection $mikroConnection
@@ -578,10 +541,10 @@ function Open-MikrotikConnection {
 if ($BLOCK_TYPE -eq "MIKROTIK") { $mikroConnection = Open-MikrotikConnection }
 
 ################################################################################
-##Process input parameters
-#if ($setting) { debug "wail2ban started. $setting" }
+## Process input parameters
+# if ($setting) { debug "wail2ban started. $setting" }
 
-#Display current configuration.
+# Display current configuration.
 if ($args -match "-config") {
 	Write-Host "`nwail2ban is currently configured to: `n ban IPs for " -nonewline
 	for ($i = 1; $i -lt 5; $i++) { Write-Host (""+[math]::pow(5,$i)+", ") -foregroundcolor "cyan" -nonewline }
@@ -625,8 +588,6 @@ if ($args -match "-jail") {
 	if ($records) { 
 		"wail2ban currently banned listings: `n"
 		foreach ($record in $records.GetEnumerator()) {
-			# $IP = $a.name.substring($FirewallRulePrefix.length+1)
-			# $expire = $a.description.substring("Expire: ".length)
 			""+$record.Name.PadLeft(14)+" expires at $($record.Value)"
 		}
 		"`nThis is a listing of the current Windows Firewall with Advanced Security rules, starting with `""+$FirewallRulePrefix+" *`""
@@ -634,7 +595,7 @@ if ($args -match "-jail") {
 	exit
 }
 
-#Unban specific IP. Remove associated schtask, if exists.
+# Unban specific IP. Remove associated schtask, if exists.
 if ($args -match "-unban") {
 	$IP = $args[ [array]::indexOf($args,"-unban")+1] 
 	Write-LogAction "Unban IP invoked: going to unban $IP and remove from the log."
@@ -650,11 +611,8 @@ if ($args -match "-help") {
 
 ################################################################################
 #Setup for the loop
-# Подготовка к запуску цикла
 
 $sinkName = "LoginAttempt"
-# Хэш-таблица, в которой будет храниться информация о неудачных
-# попытках подключения (номер в журнале, IP, дата попытки)
 $eventsTable = @{}
 $eventlist ="("
 foreach($a in $CheckEvents) {
@@ -673,40 +631,29 @@ Read-BlockPeriodLog
 
 ################################################################################
 #Loop!
-# Запуск цикла, который ожидает действий злоумышленников
 try {
 	Register-WMIEvent -Query $query -sourceidentifier $sinkName
 	do {
-		# Спать в ожидании события, подходящего под запрос
 		$occurredEvent = Wait-Event -sourceidentifier $sinkName -Timeout 120
-		# При появлении события вытаскиваем из него нужную информацию
 		if ($occurredEvent) {
 			$eventInstance = $occurredEvent.SourceEventArgs.NewEvent.TargetInstance
-			# Для каждого IP адреса в сообщении производим проверки
 			Select-String $RegexIP -input $eventInstance.message -AllMatches | ForEach-Object { foreach ($address in $_.matches) {
 				$IP = $address.Value
-				# Если попался IP самого компа - пропустить
 				if ($SelfList -match $IP) {
 					Write-LogDebug "Whitelist of self-listed IPs! Do nothing. ($IP)"
 				} else {
-					# Собрать инфу о событии и добавить ее в хэшмассив
 					$RecordID = $eventInstance.RecordNumber
 					$EventDate = WMIDateStringToDateTime($eventInstance.TIMEGenerated)
 					$eventsTable.Add($RecordID, @($IP,$EventDate))
 
-					# В хэшмассиве eventsTable хранится инфа о попытках доступа с момента старта скрипта
-					# Здесь считаются попытки доступа с одного IP
 					$IPCount = 0
 					foreach ($value in $eventsTable.Values) {
 						if ($IP -eq $value[0]) { $IPCount++ }
 					}
 					Write-LogDebug "$($eventInstance.LogFile) Write-Log Event captured: ID $($RecordID), IP $IP, Event Code $($eventInstance.EventCode), Attempt #$($IPCount). "
 
-					# При достижении порога попыток адрес отправляется в блок
 					if ($IPCount -ge $CHECK_COUNT) {
-						# Отправить адрес в бан
 						Block-Address $IP
-						# Сбросить
 						Reset-AttemptCount $IP
 					}
 					Reset-AttemptCount				
@@ -722,6 +669,7 @@ catch {
 	Write-LogError $_.Exception.Message
 }
 finally {
+	# If smth goes wrong and script terminating do not forget to close connection and event sink
 	if ($BLOCK_TYPE -eq "MIKROTIK") {
 		Write-LogDebug "Disconnecting Mikrotik."
 		Disconnect-Mikrotik -Connection $mikroConnection
