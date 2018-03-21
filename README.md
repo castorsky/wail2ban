@@ -91,6 +91,14 @@ I've added a script that will grep the wail2ban log file, and generate some nice
 
 If you want to enable this, grok the main wail2ban.ps1 script for the call to `wail2ban_htmlgen.ps1`, and enable it (remove the comment)
 
+mikrotik
+----------
+
+Script have now ability to work with Mikrotik routers. To enable ability:
+* download PowerShell module from [Mikrotik Forum](https://forum.mikrotik.com/viewtopic.php?t=108989) and unpack DLL to script's folder;
+* enable API at Mikrotik router (ip -> services)
+* uncomment Mikrotik section in config file (wail2ban_config.ini) and set parameters
+Script creates one block rule at router, places it at 0 position and adds addresses to address-list
 
 ongoing work 
 ------------
